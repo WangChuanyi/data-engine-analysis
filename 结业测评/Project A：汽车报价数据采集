@@ -42,8 +42,25 @@ for i in range(page_num):
     result = result.append(df)
 # print(result)
 
+# DataFrame的index重新排列
+result.reset_index(drop=True, inplace=True)
+
 # 将价格按照‘-’进行分列
 result[['lowestPrice','highestPrice']] = result['price'].apply(lambda x:pd.Series([i for i in x.split("-")]))
+# 生成图片完整地址
+result['picLink'] = 'http:'+result['picLink'] 
+
+for i in range(len(result)):
+    # 如果result.iloc[i]['lowestPrice']包含中文或已经有“万”字，则不添加万，如果没有，则在结尾加一个“万”
+    if u'\u4e00'<= result.iloc[i]['lowestPrice'] <= u'\u9fff':
+        continue
+    if '万' in result.iloc[i]['lowestPrice']:
+        continue
+    else:
+        # print(result.iloc[i]['lowestPrice'])
+        result.loc[i, 'lowestPrice'] = result.loc[i, 'lowestPrice'] + '万'
+
+print(result) 
 
 # 保存.csv格式文件
 result.to_csv('Volkswagen_Vehicle_Price.csv', index=False) 

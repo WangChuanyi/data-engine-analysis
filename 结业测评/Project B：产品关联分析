@@ -1,0 +1,36 @@
+import pandas as pd
+import numpy as np
+from pandas import Series, DataFrame
+import time
+
+# 导入文件，将“客户ID”及“产品名称”放入DataFrame
+dataset = pd.read_csv('订单表.csv',encoding='gbk')
+transacations = pd.DataFrame()
+transacations['Transacation']=dataset['客户ID']
+transacations['Item']=dataset['产品名称']
+# print(transacations)
+
+#按Transacation的ID进行正向排序
+transacations_sorted = transacations.sort_values(axis=0, ascending=True, by=['Transacation'])
+# 删去重复项
+transacations_drop = transacations_sorted.drop_duplicates()
+# print(transacations_drop)
+# transacations_drop.to_csv("transacations_sorted.csv",index=False)
+
+# 使用mlxtend.frequent_patterns工具包
+def rule1():
+    from mlxtend.frequent_patterns import apriori
+    from mlxtend.frequent_patterns import association_rules
+    pd.options.display.max_columns=100
+    start = time.time()
+    # 生成独热编码
+    hot_encoded_df = transacations_drop.groupby(['Transacation','Item'])['Item'].count().unstack().reset_index().fillna(0).set_index('Transacation')
+    # 计算频繁项集及关联规则
+    frequent_itemsets = apriori(hot_encoded_df, min_support=0.05, use_colnames=True)
+    rules = association_rules(frequent_itemsets, metric="lift", min_threshold=1)
+    print("频繁项集：", frequent_itemsets.sort_values('support',ascending=False))
+    print("关联规则：", rules.sort_values('lift',ascending=False))
+    end = time.time()
+    print("用时：", end-start)
+
+rule1()

@@ -1,4 +1,7 @@
-# 使用KMeans进行聚类
+# -*- coding: utf-8 -*-
+# Project C：汽车产品聚类分析
+# WangChuanyi Employee ID: 68290
+
 from sklearn.cluster import KMeans
 from sklearn import preprocessing
 import pandas as pd

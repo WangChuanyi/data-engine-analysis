@@ -1,3 +1,7 @@
+# -*- coding: utf-8 -*-
+# Project A：汽车报价数据采集
+# WangChuanyi Employee ID: 68290
+
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup

@@ -1,0 +1,242 @@
+import pandas as pd
+import numpy as np
+import re
+import os
+
+from pandas import DataFrame
+from datetime import datetime,timedelta
+        
+
+def data_analysis(df,file_name): # 定义一个用来分析车辆行驶数据的函数
+    df.loc[:,'累计里程'] = df.loc[:,'累计里程'].map(lambda date_str: date_str[:-2]) # 将累计里程末尾‘km’去掉以方便后续计算
+
+    result = pd.DataFrame(columns=['运行次数','行驶时长','行驶里程','平均车速','车速平均值','SOC均值','SOC极差',
+                                   '发动机介入次数','发动机运行时长','发动机平均每次运行时长',
+                                   '驱动电机介入次数','驱动电机运行时长','驱动电机平均每次运行时长',
+                                   'EV模式运行时长','FV模式运行时长','PHEV模式运行时长','INVALID模式运行时长'])
+    # 初始化用于判定的参数
+    j = 0
+    k = 0
+    check_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+    check_time_30s = timedelta(days=0, seconds=30, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+
+    # 初始化时间及里程起点
+    start_time = df.loc[0,'采集时间']
+    start_mileage = df.loc[0,'累计里程']
+
+    # 定义函数计算DataFrame中的车速的平均值
+    def speed_average(df):
+        df.loc[:,'车速'] = df.loc[:,'车速'].map(lambda date_str: float(date_str[:-4])) 
+        # print(df.loc[:,'车速'])
+        speed_average = df.loc[:,'车速'].mean()
+        return speed_average
+
+    # 输出一个DataFrame中各驾驶模式的时间长度
+    def driving_mode(df):
+        EV_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        FV_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        PHEV_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        INVALID_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        # 将df index按照从0开始重新排列
+        df = df.reset_index(drop = True)
+        for i in range(len(df.loc[:,'运行模式'])-1):
+            if df.loc[i,'运行模式'] == 'EV':
+                EV_time = EV_time + df.loc[i+1,'采集时间'] - df.loc[i,'采集时间']
+            if df.loc[i,'运行模式'] == 'FV':
+                FV_time = FV_time + df.loc[i+1,'采集时间'] - df.loc[i,'采集时间']
+            if df.loc[i,'运行模式'] == 'PHEV':
+                PHEV_time = PHEV_time + df.loc[i+1,'采集时间'] - df.loc[i,'采集时间']
+            if df.loc[i,'运行模式'] == 'INVALID':
+                INVALID_time = INVALID_time + df.loc[i+1,'采集时间'] - df.loc[i,'采集时间']
+            else:
+                pass
+        return EV_time, FV_time, PHEV_time, INVALID_time
+
+    # 定义函数计算DataFrame中的soc平均值及极差
+    def soc_cal(df):
+        df.loc[:,'SOC'] = df.loc[:,'SOC'].map(lambda date_str: float(date_str)) 
+        soc_average = df.loc[:,'SOC'].mean()
+        soc_max_to_min = df.loc[:,'SOC'].max()-df.loc[:,'SOC'].min()
+        return soc_average, soc_max_to_min
+
+    # 计算一个DataFrame中发动机的起动次数，总启动时长，平均每次启动时长
+    def engine_cal(df2):
+        sum_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        run_average = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        run_count = 0
+
+        # 将df2 index按照从0开始重新排列
+        df2 = df2.reset_index(drop = True)
+        # print(df2)
+
+        for a in range(0,len(df2.loc[:,'发动机状态'])):
+            if a == 0:
+                if df2.loc[a,'发动机状态'] == 'ON':
+                    start_time = df2.loc[a,'采集时间']
+                    for b in range(a,len(df2.loc[:,'发动机状态'])):
+                        if df2.loc[b,'发动机状态'] == 'OFF':
+                            end_time = df2.loc[b,'采集时间']
+                            run_time = end_time - start_time
+                            sum_time = sum_time + run_time
+                            run_count = run_count +1
+                            break
+                        else:
+                            continue
+                else:
+                    continue
+            else:
+                if df2.loc[a-1,'发动机状态'] == 'ON':
+                    continue
+                else:
+                    if df2.loc[a,'发动机状态'] == 'ON':
+                        start_time = df2.loc[a,'采集时间']
+                        for b in range(a,len(df2.loc[:,'发动机状态'])):
+                            if df2.loc[b,'发动机状态'] == 'OFF':
+                                end_time = df2.loc[b,'采集时间']
+                                run_time = end_time - start_time
+                                sum_time = sum_time + run_time
+                                run_count = run_count +1
+                                break
+                            else:
+                                continue
+                    else:
+                        continue
+
+        if run_count !=0:
+            run_average = sum_time/run_count
+        else:
+            pass
+        return run_count, sum_time, run_average
+
+    # 计算一个DataFrame中驱动电机的起动次数，总启动时长，平均每次启动时长
+    def motor_cal(df2):
+        sum_time = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        run_average = timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
+        run_count = 0
+        # 将df2 index按照从0开始重新排列
+        df2 = df2.reset_index(drop = True)
+        # print(df2)
+
+        for a in range(0,len(df2.loc[:,'驱动电机状态'])):
+            if a == 0:
+                if df2.loc[0,'驱动电机状态'] != 'CLOSED':
+                    start_time = df2.loc[0,'采集时间']
+                    for b in range(0,len(df2.loc[:,'驱动电机状态'])):
+                        if df2.loc[b,'驱动电机状态'] == 'CLOSED':
+                            end_time = df2.loc[b,'采集时间']
+                            run_time = end_time - start_time
+                            sum_time = sum_time + run_time
+                            run_count = run_count +1
+                            break
+                        else:
+                            continue
+                else:
+                    continue
+            else:
+                if df2.loc[a-1,'驱动电机状态'] != 'CLOSED':
+                    continue
+                else:
+                    if df2.loc[a,'驱动电机状态'] != 'CLOSED':
+                        start_time = df2.loc[a,'采集时间']
+                        for b in range(a,len(df2.loc[:,'驱动电机状态'])):
+                            if df2.loc[b,'驱动电机状态'] == 'CLOSED':
+                                end_time = df2.loc[b,'采集时间']
+                                run_time = end_time - start_time
+                                sum_time = sum_time + run_time
+                                run_count = run_count +1
+                                break
+                            else:
+                                continue
+                    else:
+                        continue
+
+        if run_count !=0:
+            run_average = sum_time/run_count
+        else:
+            pass
+        return run_count, sum_time, run_average
+
+    # 检查每个时间点间隔是否均<=30s，如果存在相邻时间间隔>30s情况，认为是无效数据（此时可能记录数据过程中数据存在丢失）
+    def time_interval_check(df):
+        # 将df index按照从0开始重新排列
+        df = df.reset_index(drop = True)
+        count =0
+        # print('函数中的时间范围')
+        # print(df.loc[:,])
+        for i in range(len(df.loc[:,])-1):
+            check_interval = df.loc[i+1,] - df.loc[i,]
+            if check_interval > check_time_30s:
+                count = count +1
+            else:
+                continue
+        if count > 0:
+            # print('数据无效')
+            # print(df)
+            return False
+        else:
+            # print('数据有效')
+            return True
+
+
+    # 计算运行次数、每次运行时间、每次行驶里程、平均车速、SOC相关、发动机运行、驱动电机运行等参数
+    count = 0
+    for i in range(len(df.loc[:,'车辆状态'])):
+        if df.loc[i,'车辆状态'] == 'STOPPED':
+            end_time = df.loc[i,'采集时间']
+            run_time = end_time - start_time
+            if df.loc[i-1,'车辆状态'] == 'STOPPED':# 如果前一条也是STOPPED，则起始点下移一格
+                k = k+1
+                start_time = df.loc[k,'采集时间']
+                start_mileage = df.loc[k,'累计里程']
+            else:
+                if run_time != check_time: #如果行驶时间不为0，则为有效行驶
+                    # print("本次时间范围")
+                    # print(df.loc[k:i,'采集时间'])
+                    if time_interval_check(df.loc[k:i,'采集时间']): #判断本次行驶记录为有效数据（过程不存在丢失数据的情况）
+                        result.loc[j,'运行次数'] = j+1
+                        result.loc[j,'行驶时长'] = run_time
+                        result.loc[j,'行驶里程'] = float(df.loc[i,'累计里程']) - float(start_mileage)
+                        result.loc[j,'平均车速'] = result.loc[j,'行驶里程']/run_time.total_seconds()*3600
+                        # 构建一个本次行驶的DataFrame
+                        df_thistime = df.loc[k:i,:]
+                        # print('本次数据范围')
+                        # print(df_thistime)
+                        result.loc[j,'车速平均值'] = speed_average(df_thistime)
+                        result.loc[j,'SOC均值'], result.loc[j,'SOC极差'] = soc_cal(df_thistime)
+                        result.loc[j,'发动机介入次数'], result.loc[j,'发动机运行时长'], result.loc[j,'发动机平均每次运行时长']= engine_cal(df_thistime)
+                        result.loc[j,'驱动电机介入次数'], result.loc[j,'驱动电机运行时长'], result.loc[j,'驱动电机平均每次运行时长']= motor_cal(df_thistime)
+                        result.loc[j,'EV模式运行时长'], result.loc[j,'FV模式运行时长'], result.loc[j,'PHEV模式运行时长'], result.loc[j,'INVALID模式运行时长']= driving_mode(df_thistime)
+                        j = j+1
+                    else: # 如果判断本次行驶记录为无效数据，则不进行记录
+                        count = count+1
+                        pass
+                else:
+                    pass
+
+                if i == len(df.loc[:,'车辆状态'])-1:
+                    continue
+                else:
+                    k = i+1
+                    start_time = df.loc[k,'采集时间']
+                    # print(df.loc[k,'采集时间'])
+                    start_mileage = df.loc[k,'累计里程']
+        else:
+            continue
+
+    print('无效数据组数',count)
+    # print(result)
+    result.to_excel('RTM_data_result\\'+file_name)
+
+
+tuples = os.walk(r"C:\Users\wangcy\RTM_data_source")
+for root, dirs, files in tuples:
+    for file in files:
+        print('开始计算该车数据'+file,"\n")
+        df0 = pd.read_excel('RTM_data_source\\'+file, sheet_name = 'Sheet1')
+        df3 = df0.loc[:,['采集时间','驱动电机状态','驱动电机转速','发动机状态','曲轴转速','车辆状态','SOC','运行模式','累计里程','车速']]
+        df = df3.sort_values(by=['采集时间'])
+        # 将df index按照从0开始重新排列
+        df = df.reset_index(drop = True)
+        # print(df)
+        data_analysis(df,file)
+        print('该车数据计算并存储完毕'+file,"\n")
